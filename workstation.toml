@@ -1,0 +1,12 @@
+[linux_x86_64]
+location = "~/.local/bin"
+packages = [
+  { name = "curl", url = "https://github.com/moparisthebest/static-curl/releases/download/v8.7.1/curl-amd64" },
+  { bin = "fzf", name = "fzf", archive = "https://github.com/junegunn/fzf/releases/download/v0.55.0/fzf-0.55.0-linux_amd64.tar.gz" },
+  { bin = "rg", name = "rg", archive = "https://github.com/BurntSushi/ripgrep/releases/download/14.1.0/ripgrep-14.1.0-x86_64-unknown-linux-musl.tar.gz" },
+  { bin = "fd", name = "fd", archive = "https://github.com/sharkdp/fd/releases/download/v10.2.0/fd-v10.2.0-x86_64-unknown-linux-musl.tar.gz" },
+  { bin = "yazi", name = "yazi", archive = "https://github.com/sxyazi/yazi/releases/download/v0.3.3/yazi-x86_64-unknown-linux-musl.zip" },
+  { bin = "starship", name = "starship", archive = "https://github.com/starship/starship/releases/download/v1.20.1/starship-x86_64-unknown-linux-musl.tar.gz" },
+  { name = "nvim", url = "https://github.com/neovim/neovim/releases/latest/download/nvim.appimage" },
+  { name = "tmux", url = "https://github.com/nelsonenzo/tmux-appimage/releases/download/3.3a/tmux.appimage" },
+]
