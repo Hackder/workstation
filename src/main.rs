@@ -52,14 +52,19 @@ fn setup(config: &Config) {
     let mut handles = vec![];
 
     for package in config.linux_x86_64.packages.iter() {
-        let progress_bar = multi_progress.add(ProgressBar::new(100));
+        let progress_bar = multi_progress.add(ProgressBar::new(0));
         progress_bar.set_style(progress_style.clone());
         progress_bar.set_message(format!("Installing {}", package.name()));
 
         let loc = config.linux_x86_64.location.clone();
         let pkg = package.clone();
-        let handle = std::thread::spawn(move || {
-            install_package(&loc, &pkg, progress_bar);
+        let pb = progress_bar.clone();
+        let handle = std::thread::spawn(move || match install_package(&loc, &pkg, pb) {
+            Ok(_) => {}
+            Err(e) => {
+                eprintln!("Error installing {}: {}", pkg.name(), e);
+                progress_bar.finish_with_message(format!("Error installing {}", pkg.name()));
+            }
         });
 
         handles.push(handle);
@@ -70,48 +75,63 @@ fn setup(config: &Config) {
     }
 }
 
-fn install_package(location: &PathBuf, package: &PackageConfig, pb: ProgressBar) {
+fn install_package(
+    location: &PathBuf,
+    package: &PackageConfig,
+    pb: ProgressBar,
+) -> eyre::Result<()> {
     match package {
         PackageConfig::Archive { name, bin, archive } => {
-            let bytes = download_with_progress(archive, pb).unwrap();
+            let bytes = download_with_progress(archive, pb)?;
 
             let path_buf = PathBuf::from(archive);
-            let ext = path_buf.extension().unwrap().to_str().unwrap();
+            let ext = path_buf
+                .extension()
+                .expect("extension")
+                .to_str()
+                .expect("string extension");
 
             match ext {
                 "tar.gz" => {
                     let tar = flate2::read::GzDecoder::new(std::io::Cursor::new(bytes));
                     let mut archive = tar::Archive::new(tar);
                     let entry = archive
-                        .entries()
-                        .unwrap()
+                        .entries()?
                         .find(|entry| {
-                            entry.as_ref().unwrap().path().unwrap().to_str().unwrap() == bin
+                            entry
+                                .as_ref()
+                                .expect("entry exists")
+                                .path()
+                                .expect("entry has path")
+                                .to_str()
+                                .expect("entry path is string")
+                                == bin
                         })
-                        .unwrap()
-                        .unwrap();
+                        .ok_or(eyre::eyre!("Entry not found"))??;
 
                     let data: Vec<u8> = entry.bytes().map(|b| b.unwrap()).collect();
 
-                    install(location, name, data.as_ref());
+                    install(location, name, data.as_ref())?;
                 }
                 "zip" => {
-                    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
-                    let mut entry = archive.by_name(bin).unwrap();
+                    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes))?;
+                    let mut entry = archive.by_name(bin)?;
 
                     let mut buff = vec![];
-                    entry.read_to_end(&mut buff).unwrap();
+                    entry.read_to_end(&mut buff)?;
 
-                    install(location, name, buff.as_ref());
+                    install(location, name, buff.as_ref())?;
                 }
                 _ => panic!("Unsupported archive format"),
             }
         }
         PackageConfig::Binary { name, url } => {
-            let bytes = download_with_progress(url, pb).unwrap();
-            install(location, name, bytes.as_ref());
+            let bytes = download_with_progress(url, pb)?;
+            install(location, name, bytes.as_ref())?;
         }
     }
+
+    Ok(())
 }
 
 fn download_with_progress(url: &str, pb: ProgressBar) -> eyre::Result<Vec<u8>> {
@@ -129,6 +149,8 @@ fn download_with_progress(url: &str, pb: ProgressBar) -> eyre::Result<Vec<u8>> {
     let mut buf = Vec::with_capacity(total_length as usize);
     let mut downloaded = 0;
 
+    pb.set_length(total_length);
+
     for chunk in response.bytes().into_iter() {
         buf.extend_from_slice(&chunk);
         downloaded += chunk.len() as u64;
@@ -140,14 +162,21 @@ fn download_with_progress(url: &str, pb: ProgressBar) -> eyre::Result<Vec<u8>> {
     Ok(buf)
 }
 
-fn install(location: &PathBuf, name: &str, data: &[u8]) {
+fn get_install_path(location: &PathBuf, name: &str) -> eyre::Result<PathBuf> {
     let path = location.join(name);
-    let path = expanduser::expanduser(path.to_str().unwrap()).unwrap();
+    let path = expanduser::expanduser(path.to_str().expect("string path"))?;
+    Ok(PathBuf::from(path))
+}
 
-    std::fs::write(path, data).unwrap();
+fn install(location: &PathBuf, name: &str, data: &[u8]) -> eyre::Result<()> {
+    let path = get_install_path(location, name)?;
+
+    std::fs::write(path, data)?;
 
     // Add executable permissions
-    std::fs::set_permissions(location.join(name), std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::set_permissions(location.join(name), std::fs::Permissions::from_mode(0o755))?;
+
+    Ok(())
 }
 
 #[derive(Deserialize, Debug)]
@@ -181,5 +210,21 @@ impl PackageConfig {
             PackageConfig::Archive { name, .. } => name,
             PackageConfig::Binary { name, .. } => name,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_install_path() {
+        let location = PathBuf::from("~/.local/bin");
+        let name = "test";
+        let expected = PathBuf::from("/Users/jurajpetras/.local/bin/test");
+
+        let path = get_install_path(&location, name);
+
+        assert_eq!(path.unwrap(), expected);
     }
 }
