@@ -94,47 +94,37 @@ fn install_package(
                 .with_context(|| format!("Failed to download {}", name))?;
             pb.finish_with_message(format!("Downloaded {}", name));
 
-            let path_buf = PathBuf::from(archive);
-            let ext = path_buf
-                .extension()
-                .expect("extension")
-                .to_str()
-                .expect("string extension");
+            if archive.ends_with(".tar.gz") {
+                let tar = flate2::read::GzDecoder::new(std::io::Cursor::new(bytes));
+                let mut archive = tar::Archive::new(tar);
+                let entry = archive
+                    .entries()?
+                    .find(|entry| {
+                        entry
+                            .as_ref()
+                            .expect("entry exists")
+                            .path()
+                            .expect("entry has path")
+                            .to_str()
+                            .expect("entry path is string")
+                            == bin
+                    })
+                    .ok_or(eyre::eyre!("Entry not found"))
+                    .with_context(|| "Searching for entry")??;
 
-            match ext {
-                "tar.gz" => {
-                    let tar = flate2::read::GzDecoder::new(std::io::Cursor::new(bytes));
-                    let mut archive = tar::Archive::new(tar);
-                    let entry = archive
-                        .entries()?
-                        .find(|entry| {
-                            entry
-                                .as_ref()
-                                .expect("entry exists")
-                                .path()
-                                .expect("entry has path")
-                                .to_str()
-                                .expect("entry path is string")
-                                == bin
-                        })
-                        .ok_or(eyre::eyre!("Entry not found"))
-                        .with_context(|| "Searching for entry")??;
+                let data: Vec<u8> = entry.bytes().map(|b| b.unwrap()).collect();
 
-                    let data: Vec<u8> = entry.bytes().map(|b| b.unwrap()).collect();
+                install(location, name, data.as_ref()).with_context(|| format!("Installing"))?;
+            } else if archive.ends_with(".zip") {
+                let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes))?;
+                let mut entry = archive.by_name(bin)?;
 
-                    install(location, name, data.as_ref())
-                        .with_context(|| format!("Installing"))?;
-                }
-                "zip" => {
-                    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes))?;
-                    let mut entry = archive.by_name(bin)?;
+                let mut buff = vec![];
+                entry.read_to_end(&mut buff)?;
 
-                    let mut buff = vec![];
-                    entry.read_to_end(&mut buff)?;
-
-                    install(location, name, buff.as_ref()).with_context(|| "Installing")?;
-                }
-                _ => panic!("Unsupported archive format"),
+                install(location, name, buff.as_ref()).with_context(|| "Installing")?;
+            } else {
+                eyre::bail!("Unsupported archive format");
             }
         }
         PackageConfig::Binary { name, url } => {
