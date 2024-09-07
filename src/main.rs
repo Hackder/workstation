@@ -59,7 +59,7 @@ fn setup(config: &Config) {
         let loc = config.linux_x86_64.location.clone();
         let pkg = package.clone();
         let handle = std::thread::spawn(move || {
-            install_pacakge(&loc, &pkg, progress_bar);
+            install_package(&loc, &pkg, progress_bar);
         });
 
         handles.push(handle);
@@ -70,7 +70,7 @@ fn setup(config: &Config) {
     }
 }
 
-fn install_pacakge(location: &PathBuf, package: &PackageConfig, pb: ProgressBar) {
+fn install_package(location: &PathBuf, package: &PackageConfig, pb: ProgressBar) {
     match package {
         PackageConfig::Archive { name, bin, archive } => {
             let bytes = download_with_progress(archive, pb).unwrap();
@@ -141,7 +141,10 @@ fn download_with_progress(url: &str, pb: ProgressBar) -> eyre::Result<Vec<u8>> {
 }
 
 fn install(location: &PathBuf, name: &str, data: &[u8]) {
-    std::fs::write(location.join(name), data).unwrap();
+    let path = location.join(name);
+    let path = expanduser::expanduser(path.to_str().unwrap()).unwrap();
+
+    std::fs::write(path, data).unwrap();
 
     // Add executable permissions
     std::fs::set_permissions(location.join(name), std::fs::Permissions::from_mode(0o755)).unwrap();
