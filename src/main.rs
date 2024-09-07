@@ -1,6 +1,7 @@
 use std::{io::Read, os::unix::fs::PermissionsExt, path::PathBuf};
 
 use clap::{Parser, Subcommand};
+use eyre::Context;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use serde::Deserialize;
 
@@ -59,11 +60,18 @@ fn setup(config: &Config) {
         let loc = config.linux_x86_64.location.clone();
         let pkg = package.clone();
         let pb = progress_bar.clone();
-        let handle = std::thread::spawn(move || match install_package(&loc, &pkg, pb) {
-            Ok(_) => {}
-            Err(e) => {
-                eprintln!("Error installing {}: {}", pkg.name(), e);
-                progress_bar.finish_with_message(format!("Error installing {}", pkg.name()));
+        let handle = std::thread::spawn(move || {
+            match install_package(&loc, &pkg, pb)
+                .with_context(|| format!("Installing {}", pkg.name()))
+            {
+                Ok(_) => {}
+                Err(e) => {
+                    progress_bar.finish_with_message(format!(
+                        "Error installing {}: {:?}",
+                        pkg.name(),
+                        e
+                    ));
+                }
             }
         });
 
@@ -82,7 +90,9 @@ fn install_package(
 ) -> eyre::Result<()> {
     match package {
         PackageConfig::Archive { name, bin, archive } => {
-            let bytes = download_with_progress(archive, pb)?;
+            let bytes = download_with_progress(archive, &pb)
+                .with_context(|| format!("Failed to download {}", name))?;
+            pb.finish_with_message(format!("Downloaded {}", name));
 
             let path_buf = PathBuf::from(archive);
             let ext = path_buf
@@ -107,11 +117,13 @@ fn install_package(
                                 .expect("entry path is string")
                                 == bin
                         })
-                        .ok_or(eyre::eyre!("Entry not found"))??;
+                        .ok_or(eyre::eyre!("Entry not found"))
+                        .with_context(|| "Searching for entry")??;
 
                     let data: Vec<u8> = entry.bytes().map(|b| b.unwrap()).collect();
 
-                    install(location, name, data.as_ref())?;
+                    install(location, name, data.as_ref())
+                        .with_context(|| format!("Installing"))?;
                 }
                 "zip" => {
                     let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes))?;
@@ -120,21 +132,22 @@ fn install_package(
                     let mut buff = vec![];
                     entry.read_to_end(&mut buff)?;
 
-                    install(location, name, buff.as_ref())?;
+                    install(location, name, buff.as_ref()).with_context(|| "Installing")?;
                 }
                 _ => panic!("Unsupported archive format"),
             }
         }
         PackageConfig::Binary { name, url } => {
-            let bytes = download_with_progress(url, pb)?;
-            install(location, name, bytes.as_ref())?;
+            let bytes = download_with_progress(url, &pb).with_context(|| "Downloading")?;
+            pb.finish_with_message(format!("Downloaded {}", name));
+            install(location, name, bytes.as_ref()).with_context(|| "Installing")?;
         }
     }
 
     Ok(())
 }
 
-fn download_with_progress(url: &str, pb: ProgressBar) -> eyre::Result<Vec<u8>> {
+fn download_with_progress(url: &str, pb: &ProgressBar) -> eyre::Result<Vec<u8>> {
     let client = reqwest::blocking::Client::new();
     let response = client.get(url).send()?;
 
@@ -156,8 +169,6 @@ fn download_with_progress(url: &str, pb: ProgressBar) -> eyre::Result<Vec<u8>> {
         downloaded += chunk.len() as u64;
         pb.set_position(downloaded);
     }
-
-    pb.finish_with_message(format!("Downloaded {}", url));
 
     Ok(buf)
 }
