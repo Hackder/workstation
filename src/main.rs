@@ -182,10 +182,10 @@ fn get_install_path(location: &PathBuf, name: &str) -> eyre::Result<PathBuf> {
 fn install(location: &PathBuf, name: &str, data: &[u8]) -> eyre::Result<()> {
     let path = get_install_path(location, name)?;
 
-    std::fs::write(path, data)?;
+    std::fs::write(&path, data)?;
 
     // Add executable permissions
-    std::fs::set_permissions(location.join(name), std::fs::Permissions::from_mode(0o755))?;
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))?;
 
     Ok(())
 }
