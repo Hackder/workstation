@@ -100,14 +100,14 @@ fn install_package(
                 let entry = archive
                     .entries()?
                     .find(|entry| {
-                        entry
+                        let entry_name = entry
                             .as_ref()
                             .expect("entry exists")
                             .path()
-                            .expect("entry has path")
-                            .to_str()
-                            .expect("entry path is string")
-                            == bin
+                            .expect("entry has path");
+                        let entry_name = entry_name.to_str().expect("entry path is string");
+
+                        entry_name == bin || entry_name == format!("./{}", bin)
                     })
                     .ok_or(eyre::eyre!("Entry not found"))
                     .with_context(|| "Searching for entry")??;
@@ -227,5 +227,23 @@ mod tests {
         let path = get_install_path(&location, name);
 
         assert_eq!(path.unwrap(), expected);
+    }
+
+    #[test]
+    fn text_eza_archive() {
+        // Read file from disk
+        let bytes = std::fs::read("eza_archive.tar.gz").unwrap();
+        let archive = flate2::read::GzDecoder::new(std::io::Cursor::new(bytes));
+        let mut archive = tar::Archive::new(archive);
+        for entry in archive.entries().unwrap() {
+            let entry = entry.unwrap();
+            println!("{:?}", entry.path().unwrap());
+        }
+        let entry = archive
+            .entries()
+            .unwrap()
+            .find(|entry| entry.as_ref().unwrap().path().unwrap().to_str().unwrap() == "eza");
+
+        assert!(entry.is_some());
     }
 }
