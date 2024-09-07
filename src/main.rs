@@ -1,6 +1,7 @@
 use std::{io::Read, os::unix::fs::PermissionsExt, path::PathBuf};
 
 use clap::{Parser, Subcommand};
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use serde::Deserialize;
 
 #[derive(Parser)]
@@ -41,15 +42,38 @@ fn main() {
 }
 
 fn setup(config: &Config) {
-    for package in &config.linux_x86_64.packages {
-        install_pacakge(&config.linux_x86_64.location, package);
+    let multi_progress = MultiProgress::new();
+    let progress_style = ProgressStyle::with_template(
+        "[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} {msg}",
+    )
+    .unwrap()
+    .progress_chars("##-");
+
+    let mut handles = vec![];
+
+    for package in config.linux_x86_64.packages.iter() {
+        let progress_bar = multi_progress.add(ProgressBar::new(100));
+        progress_bar.set_style(progress_style.clone());
+        progress_bar.set_message(format!("Installing {}", package.name()));
+
+        let loc = config.linux_x86_64.location.clone();
+        let pkg = package.clone();
+        let handle = std::thread::spawn(move || {
+            install_pacakge(&loc, &pkg, progress_bar);
+        });
+
+        handles.push(handle);
+    }
+
+    for handle in handles {
+        handle.join().unwrap();
     }
 }
 
-fn install_pacakge(location: &PathBuf, package: &PackageConfig) {
+fn install_pacakge(location: &PathBuf, package: &PackageConfig, pb: ProgressBar) {
     match package {
         PackageConfig::Archive { name, bin, archive } => {
-            let bytes = reqwest::blocking::get(archive).unwrap().bytes().unwrap();
+            let bytes = download_with_progress(archive, pb).unwrap();
 
             let path_buf = PathBuf::from(archive);
             let ext = path_buf.extension().unwrap().to_str().unwrap();
@@ -84,10 +108,36 @@ fn install_pacakge(location: &PathBuf, package: &PackageConfig) {
             }
         }
         PackageConfig::Binary { name, url } => {
-            let bytes = reqwest::blocking::get(url).unwrap().bytes().unwrap();
+            let bytes = download_with_progress(url, pb).unwrap();
             install(location, name, bytes.as_ref());
         }
     }
+}
+
+fn download_with_progress(url: &str, pb: ProgressBar) -> eyre::Result<Vec<u8>> {
+    let client = reqwest::blocking::Client::new();
+    let response = client.get(url).send()?;
+
+    if !response.status().is_success() {
+        eyre::bail!("Failed to download {}", url);
+    }
+
+    let total_length = response
+        .content_length()
+        .ok_or(eyre::eyre!("Failed to get content length"))?;
+
+    let mut buf = Vec::with_capacity(total_length as usize);
+    let mut downloaded = 0;
+
+    for chunk in response.bytes().into_iter() {
+        buf.extend_from_slice(&chunk);
+        downloaded += chunk.len() as u64;
+        pb.set_position(downloaded);
+    }
+
+    pb.finish_with_message(format!("Downloaded {}", url));
+
+    Ok(buf)
 }
 
 fn install(location: &PathBuf, name: &str, data: &[u8]) {
@@ -108,7 +158,7 @@ struct ArchConfig {
     packages: Vec<PackageConfig>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 #[serde(untagged)]
 enum PackageConfig {
     Archive {
@@ -120,4 +170,13 @@ enum PackageConfig {
         name: String,
         url: String,
     },
+}
+
+impl PackageConfig {
+    pub fn name(&self) -> &str {
+        match self {
+            PackageConfig::Archive { name, .. } => name,
+            PackageConfig::Binary { name, .. } => name,
+        }
+    }
 }
