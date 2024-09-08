@@ -3,14 +3,15 @@ use std::{io::Read, os::unix::fs::PermissionsExt, path::PathBuf};
 use clap::{Parser, Subcommand};
 use eyre::Context;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use reqwest::Url;
 use serde::Deserialize;
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
 struct Cli {
     /// Sets a custom config file
-    #[arg(short, long, value_name = "FILE")]
-    config: Option<PathBuf>,
+    #[arg(short, long, value_name = "URL")]
+    remote_config: Option<Url>,
 
     // /// Turn debugging information on
     // #[arg(short, long, action = clap::ArgAction::Count)]
@@ -28,14 +29,18 @@ enum Command {
 fn main() {
     let cli = Cli::parse();
 
-    let config_path = cli
-        .config
-        .unwrap_or_else(|| PathBuf::from("workstation.toml"));
-
     match cli.command {
         Command::Setup => {
-            let config: Config =
-                toml::from_str(&std::fs::read_to_string(config_path).unwrap()).unwrap();
+            let config = match cli.remote_config {
+                Some(url) => {
+                    let string = reqwest::blocking::get(url).unwrap().text().unwrap();
+                    toml::from_str(string.as_str()).unwrap()
+                }
+                None => {
+                    let string = std::fs::read_to_string("workstation.toml").unwrap();
+                    toml::from_str(string.as_str()).unwrap()
+                }
+            };
 
             setup(&config);
         }
